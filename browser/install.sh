@@ -83,6 +83,8 @@ else
 	<string>1</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
@@ -95,9 +97,13 @@ PLIST
 exec "$HOME/.local/bin/claude-browser" "$@"
 SH
     chmod 755 "$MACOS_DIR/ClaudeBrowserLauncher"
-    # 图标直接借 Chrome 副本的
+    # 图标直接借 Chrome 副本的。macOS 26 起 Dock 按 Assets.car（CFBundleIconName）满幅渲染新式图标，
+    # 只带 .icns 的 App 会被缩一圈套进方圆底板，和正版 Chrome 并排时明显小一号——所以两种都带上。
     if [ -f "$APP_DIR/Contents/Resources/app.icns" ]; then
       cp "$APP_DIR/Contents/Resources/app.icns" "$RES_DIR/AppIcon.icns"
+    fi
+    if [ -f "$APP_DIR/Contents/Resources/Assets.car" ]; then
+      cp "$APP_DIR/Contents/Resources/Assets.car" "$RES_DIR/Assets.car"
     fi
     codesign --force --deep --sign - "$DOCK_APP" 2>/dev/null || true
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DOCK_APP" 2>/dev/null || true
