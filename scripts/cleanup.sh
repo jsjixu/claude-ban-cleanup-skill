@@ -13,7 +13,7 @@ declare -a PROTECTS=()
 usage() {
   cat <<'USAGE' >&2
 用法: cleanup.sh <manifest.json> [--task <name>] [--trash-root <dir>] [--protect <dir>]... [--dry-run]
-manifest 项类型: path / keychain / rc-comment（见 SKILL.md §2）
+manifest 项类型: path / keychain / rc-comment / json-unset（见 SKILL.md §2）
 USAGE
 }
 
@@ -73,8 +73,10 @@ def lsof_pids(path, timeout=20):
     pids = set()
     for line in r.stdout.splitlines():
         line = line.strip()
-        if line.startswith("p") and line[1:].isdigit():
+        if line.startswith("p") and line[1:].isdigit():   # -Fp 输出
             pids.add(line[1:])
+        elif line.isdigit():                            # -t 输出
+            pids.add(line)
     return sorted(pids)
 
 def rel_dest(trash, path):
@@ -171,6 +173,46 @@ for it in items:
                 errors.append(f); print(f"[警告: 语法校验失败，请人工核对] {f}: {r.stderr.strip()[:200]}")
             else:
                 print(f"[已注释并校验] {f}（备份 {bak}）")
+        moved.append(f)
+
+    elif t == "json-unset":
+        f = os.path.expanduser(it["file"])
+        keys = it.get("keys") or []
+        why = is_protected(f)
+        if why:
+            refused.append(f); print(f"[拒绝: 受保护({why})] {f}"); continue
+        if not os.path.isfile(f):
+            refused.append(f); print(f"[拒绝: 不是常规文件] {f}"); continue
+        # Claude Code 不常驻持有该文件，lsof 查不到——必须用进程名兜底
+        run_pids = set()
+        for pat, flag in (("claude", "-x"), ("/.local/share/claude/versions/", "-f")):
+            r = subprocess.run(["pgrep", flag, pat], capture_output=True, text=True)
+            run_pids.update(p for p in r.stdout.split() if p.isdigit())
+        run_pids.discard(str(os.getpid()))
+        if run_pids:
+            pl = sorted(run_pids)
+            busy.append((f, pl))
+            print(f"[跳过: Claude Code 正在运行 pid {','.join(pl)}（请先退出）] {f}"); continue
+        pids = lsof_pids(f)
+        if pids:
+            busy.append((f, pids)); print(f"[跳过: 被占用 pid {','.join(pids)}（请先退出 Claude Code）] {f}"); continue
+        bak = rel_dest(trash, f)
+        if DRY_RUN:
+            print(f"[计划 json-unset] {f} keys={keys}（先备份到 {bak}）")
+        else:
+            os.makedirs(os.path.dirname(bak), exist_ok=True)
+            shutil.copy2(f, bak)
+            d = json.load(open(f, encoding="utf-8"))
+            present = [k for k in keys if k in d]
+            for k in present:
+                del d[k]
+            tmp = f + ".cbc-tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(d, fh, indent=2, ensure_ascii=False)
+                fh.write("\n")
+            shutil.copymode(f, tmp)
+            os.replace(tmp, f)
+            print(f"[json-unset] {f} 已删键 {present or '（无命中）'} 缺失键 {[k for k in keys if k not in present]}（备份 {bak}）")
         moved.append(f)
 
     else:

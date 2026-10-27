@@ -47,7 +47,12 @@ def m(v):
     return (v[:4] + "…") if isinstance(v, str) and v else "-"
 mcps = len(d.get("mcpServers") or {})
 mail = o.get("emailAddress") or o.get("email") or ""
-print("|".join([m(o.get("accountUuid")), m(o.get("organizationUuid")), m(mail), str(mcps), o.get("accountUuid") or ""]))
+pres = lambda k: "存在" if isinstance(d.get(k), str) and d.get(k) else "缺失"
+fst = d.get("firstStartTime") or "-"
+fsv = d.get("firstStartVersion") or "-"
+print("|".join([m(o.get("accountUuid")), m(o.get("organizationUuid")), m(mail), str(mcps),
+                pres("userID"), pres("machineID"), str(fst), str(fsv),
+                o.get("accountUuid") or ""]))
 PY
 }
 
@@ -78,10 +83,12 @@ echo
 if [ -f "$HOME/.claude.json" ]; then
   echo "- 存在, $(size_of "$HOME/.claude.json"), mtime $(stat -f '%Sm' "$HOME/.claude.json")"
   res=$(oauth_fields "$HOME/.claude.json")
-  IFS='|' read -r mu mo me mc rawuuid <<< "$res"
+  IFS='|' read -r mu mo me mc uid mid fst fsv rawuuid <<< "$res"
   MAIN_UUID="$rawuuid"
   echo "- oauthAccount.accountUuid: $mu   organizationUuid: $mo   email: $me"
   echo "- mcpServers 数量: $mc"
+  echo "- 设备标识: userID $uid  machineID $mid  firstStartTime $fst  firstStartVersion $fsv"
+  [ "$fst" != "-" ] && echo "- 判断: firstStartTime 早于新账号登录时间 ⇒ userID/machineID 诞生于新账号之前，需确认老账号是否曾在此配置下使用；如不确定，建议重置（manifest 类型 json-unset）"
 else
   echo "- 不存在"
   MAIN_UUID=""
@@ -97,14 +104,47 @@ if [ -d "$HOME/.claude" ]; then
     b=$(basename "$d")
     flag=""
     case "$b" in
-      statsig|telemetry)
+      statsig)
         flag="  ⚠️ 建议清理候选"
+        printf '%s\t%s\n' "$d" "Claude Code 遥测/实验状态（含老账号 stableID）" >> "$CAND_FILE";;
+      telemetry)
+        tn=$(find "$d" -maxdepth 1 -name '1p_failed_events.*.json' 2>/dev/null | wc -l | tr -d ' ')
+        flag="  ⚠️ 建议清理候选（失败重发队列 $tn 个文件）"
         printf '%s\t%s\n' "$d" "Claude Code 遥测/实验状态（含老账号 stableID）" >> "$CAND_FILE";;
     esac
     echo "- \`$b\`  $(size_of "$d")$flag"
   done
 else
   echo "- ~/.claude 不存在"
+fi
+echo
+
+# ---------- 2b. ~/.claude/backups/ ----------
+echo "## ~/.claude/backups/（配置滚动备份）"
+echo
+BKP="$HOME/.claude/backups"
+if [ -d "$BKP" ]; then
+  any=0
+  for bp in "$BKP"/.claude.json.backup.*; do
+    [ -f "$bp" ] || continue
+    any=1
+    res=$(oauth_fields "$bp")
+    IFS='|' read -r mu mo me mc uid mid fst fsv rawuuid <<< "$res"
+    if [ -z "$rawuuid" ]; then
+      verdict="- 无 oauthAccount"
+    elif [ -z "$MAIN_UUID" ]; then
+      verdict="（主文件无 accountUuid，不比较）"
+    elif [ "$rawuuid" = "$MAIN_UUID" ]; then
+      verdict="✅ 同当前账号"
+    else
+      verdict="⚠️ 与当前账号不同（老账号残余）"
+      printf '%s\t%s\n' "$bp" "备份中含非当前账号的 oauthAccount" >> "$CAND_FILE"
+    fi
+    echo "- $(basename "$bp")  $(stat -f '%Sm' "$bp")  $(size_of "$bp")  acct=$mu uid=$uid mid=$mid  $verdict"
+  done
+  [ "$any" = 0 ] && echo "- 目录存在但无 .claude.json.backup.*"
+else
+  echo "- 不存在"
 fi
 echo
 
@@ -140,6 +180,15 @@ for s in ${EXTRA_KC[@]+"${EXTRA_KC[@]}"}; do
   echo "| $s | $(kc_status "$s") |"
 done
 echo
+# 非钥匙串环境的明文凭证文件
+CRED="$HOME/.claude/.credentials.json"
+if [ -f "$CRED" ]; then
+  echo "- ~/.claude/.credentials.json: 存在（明文凭证文件，mtime $(stat -f '%Sm' "$CRED")）⚠️ 建议清理候选"
+  printf '%s\t%s\n' "$CRED" "明文 OAuth 凭证文件（非钥匙串路径）" >> "$CAND_FILE"
+else
+  echo "- ~/.claude/.credentials.json: 不存在"
+fi
+echo
 
 # ---------- 5. shell rc ----------
 echo "## shell rc 中的令牌 / alias 注入"
@@ -171,10 +220,10 @@ if [ ${#CJ_FILES[@]} -eq 0 ]; then
 else
   for f in "${CJ_FILES[@]}"; do
     res=$(oauth_fields "$f")
-    IFS='|' read -r mu mo me mc rawuuid <<< "$res"
+    IFS='|' read -r mu mo me mc uid mid fst fsv rawuuid <<< "$res"
     rel="${f#$HOME/}"
     echo "- \`$rel\`"
-    echo "    accountUuid=$mu org=$mo email=$me mcp=$mc"
+    echo "    accountUuid=$mu org=$mo email=$me mcp=$mc uid=$uid mid=$mid firstStartTime=$fst"
     # 与主 .claude.json 的 accountUuid 不同 → 记录为"账号不同"候选（内部判断）
     if [ -n "$rawuuid" ] && [ "$rawuuid" != "$MAIN_UUID" ]; then
       echo "    ⚠️ 与 ~/.claude.json 的 accountUuid 不同（疑似老账号残余）"
@@ -314,8 +363,8 @@ echo "## 建议的清理 manifest 草稿"
 echo
 echo "（全部为 confirmed:false —— 逐项确认后再交给 cleanup.sh）"
 echo
-if [ -s "$CAND_FILE" ]; then
-  MJSON=$(python3 - "$CAND_FILE" <<'PY'
+[ -s "$CAND_FILE" ] || echo "（无路径候选，仅 json-unset 草稿）"
+MJSON=$(python3 - "$CAND_FILE" <<'PY'
 import json, sys
 items = []
 for line in open(sys.argv[1]):
@@ -323,18 +372,17 @@ for line in open(sys.argv[1]):
     if not line: continue
     p, _, note = line.partition("\t")
     items.append({"type": "path", "path": p, "confirmed": False, "note": note})
+items.append({"type": "json-unset", "file": "~/.claude.json",
+              "keys": ["userID", "machineID"], "confirmed": False,
+              "note": "重置设备标识（仅当老账号可能用过这份配置时确认；下次启动自动生成新值）"})
 print(json.dumps({"items": items}, ensure_ascii=False, indent=2))
 PY
 )
-  echo '```json'; echo "$MJSON"; echo '```'
-  if [ -n "$MANIFEST_OUT" ]; then
-    printf '%s\n' "$MJSON" > "$MANIFEST_OUT"
-    echo
-    echo "已写入: \`$MANIFEST_OUT\`"
-  fi
-else
-  echo "（无候选）"
-  [ -n "$MANIFEST_OUT" ] && printf '{"items": []}\n' > "$MANIFEST_OUT"
+echo '```json'; echo "$MJSON"; echo '```'
+if [ -n "$MANIFEST_OUT" ]; then
+  printf '%s\n' "$MJSON" > "$MANIFEST_OUT"
+  echo
+  echo "已写入: \`$MANIFEST_OUT\`"
 fi
 }
 

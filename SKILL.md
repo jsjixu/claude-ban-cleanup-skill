@@ -24,7 +24,10 @@ description: macOS 上 Claude 账号被封/换号后的"干净接入"全流程�
 
 | 位置 | 内容 | 处理 |
 |---|---|---|
-| `~/.claude.json` | `oauthAccount`（accountUuid / organizationUuid / email）、MCP 授权态、项目列表 | 换号后由新登录覆盖；老的 UUID/email 是**老账号标记**，用于全盘扫描 |
+| `~/.claude.json` | `oauthAccount`（accountUuid / organizationUuid / email）、`userID`/`machineID`（随机生成、随文件永久复用的设备标识）、`firstStartTime`（文件诞生时间）、MCP 授权态、项目列表 | 换号后由新登录覆盖；老的 UUID/email 是**老账号标记**，用于全盘扫描；设备标识视老账号使用史决定是否 `json-unset` 重置 |
+| `~/.claude/backups/.claude.json.backup.*` | 主文件的完整滚动副本（每次变更一份），换号后老账号 UUID 仍留在这里 | 逐份核对 accountUuid，非当前账号的进废纸篓 |
+| `~/.claude/telemetry/1p_failed_events.*.json` | 遥测失败重发队列，网络恢复后自动补发 | 整个 `telemetry/` 目录进废纸篓（队列会重建） |
+| `~/.claude/.credentials.json` | 非钥匙串环境（Linux/Windows 或未开钥匙串）的明文 OAuth 凭证 | 存在即候选：先确认新 OAuth 已进 `Claude Code-credentials`，再移走 |
 | `~/.claude/` | settings、projects、sessions、skills、plugins、statsig、telemetry | 保留；只清 `statsig/`、`telemetry/`、含老 UUID 的 plugin 目录 |
 | 钥匙串 `Claude Code-credentials` | 当前 OAuth 凭据 | 新登录会覆盖；审计只看 `security find-generic-password -s 'Claude Code-credentials'` 是否存在及修改时间 |
 | 钥匙串 `claude-code-oauth-token`（或任意自定义服务名） | 长效令牌 | 老账号的要删；**先确认新 OAuth 凭据存在**再删 |
@@ -47,10 +50,13 @@ description: macOS 上 Claude 账号被封/换号后的"干净接入"全流程�
 
 - 对每一项：`lsof` 检查是否被占用 → 占用则跳过并报告 PID；否则 `mv` 到 `~/ClaudeBackups/<task>-<date>/` 保留相对路径。
 - 钥匙串项用 `security delete-generic-password -s <service> -a <account>`，删前 `find-generic-password` 确认新凭据存在。
+- `json-unset` 项从 JSON 文件里删掉指定顶层键（用于重置 `userID`/`machineID`）：要求 Claude Code 已退出（`lsof` 检查，占用则跳过），先备份再原子写回。
 - rc 文件只注释不删行，并 `zsh -n` 校验语法。
 - 结束输出：移动了什么、跳过了什么（含 PID）、废纸篓位置。
 
 **常见二次清理**：第一轮会漏掉被进程锁住的文件（Codex 的 sqlite、Orca 的 partition）。退出对应 App 后再跑一次 manifest 中的 `skipped` 项。
+
+**设备标识要不要重置**：`firstStartTime` 早于新账号首次登录 ⇒ 问用户老账号最后一次在本机用 Claude Code 是否早于该日期；是 → 不动；否/不确定 → 用 `json-unset` 重置 `userID`/`machineID` 并把含旧值的 backups 一并移走（服务端只会视为换了一台设备）。
 
 ## 3. 项目接管（新账号在 Orca / 终端里继续用原项目）
 
@@ -149,7 +155,7 @@ NTP 返回 UTC 时间，不含任何时区信息；时区完全由系统设置�
 
 ## 8. 交付时报告什么
 
-- 清理：移走了哪些（按类别计数）、废纸篓路径、老账号标记扫描结果（命中 0）、被跳过的文件及原因。
+- 清理：移走了哪些（按类别计数）、废纸篓路径、老账号标记扫描结果（命中 0）、被跳过的文件及原因、设备标识年龄判断结果。
 - 接管：三样东西各自状态（项目目录、Git HEAD/remote/base、`~/.claude/projects` 会话）。
 - 网络：Surge 规则命中统计表（条数 × 协议 × 规则 × 策略）、出口 IP 对比、当前加载的 profile 未变。
 - 浏览器：Accept-Language 回显、时区、WebRTC 结果、路由器日志样例（`claude.ai -> isolated`、`example.com -> personal`）。
