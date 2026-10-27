@@ -56,7 +56,7 @@ $EDITOR manifest.json
 ~/.claude/skills/claude-ban-cleanup/scripts/restore-git.sh <repo-dir> <remote-url>
 
 # 5) Surge 固定出口：把 surge/claude-rules.conf 的 <FIXED_NODE> / <HOME> /
-#    <CLAUDE_BROWSER_APP> 填好，合并进你的 profile，手动切换
+#    <CLAUDE_BROWSER_APP> <CLAUDE_DESKTOP_APP> 填好，合并进你的 profile，手动切换
 
 # 6) Claude Code 走专用口：把 claude/settings.env.example.json 的 env 段
 #    合并进 ~/.claude/settings.json（BROWSER 记得改成你的路径）
