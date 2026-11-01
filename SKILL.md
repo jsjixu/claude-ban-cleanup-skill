@@ -28,6 +28,8 @@ description: macOS 上 Claude 账号被封/换号后的"干净接入"全流程�
 | `~/.claude/backups/.claude.json.backup.*` | 主文件的完整滚动副本（每次变更一份），换号后老账号 UUID 仍留在这里 | 逐份核对 accountUuid，非当前账号的进废纸篓 |
 | `~/.claude/telemetry/1p_failed_events.*.json` | 遥测失败重发队列，网络恢复后自动补发 | 整个 `telemetry/` 目录进废纸篓（队列会重建） |
 | `~/.claude/.credentials.json` | 非钥匙串环境（Linux/Windows 或未开钥匙串）的明文 OAuth 凭证 | 存在即候选：先确认新 OAuth 已进 `Claude Code-credentials`，再移走 |
+| `~/Library/Application Support/Claude/ant-did` + `ant-device-registry.json` | 桌面端设备标识：ant-did 是随机 UUID 的 Base64；registry 按账号索引设备公钥指纹与服务端设备记录 ID | 移走后下次启动重新生成/登记，但不等于撤销服务端登记、不等于更换硬件密钥 |
+| `~/Library/Application Support/Claude/plan-usage-history.json` | 含组织 UUID 与用量时间戳 | 老账号留下的进废纸篓 |
 | `~/.claude/` | settings、projects、sessions、skills、plugins、statsig、telemetry | 保留；只清 `statsig/`、`telemetry/`、含老 UUID 的 plugin 目录 |
 | 钥匙串 `Claude Code-credentials` | 当前 OAuth 凭据 | 新登录会覆盖；审计只看 `security find-generic-password -s 'Claude Code-credentials'` 是否存在及修改时间 |
 | 钥匙串 `claude-code-oauth-token`（或任意自定义服务名） | 长效令牌 | 老账号的要删；**先确认新 OAuth 凭据存在**再删 |
@@ -38,13 +40,23 @@ description: macOS 上 Claude 账号被封/换号后的"干净接入"全流程�
 | Codex：`~/.codex/sessions/*.jsonl`、`~/.codex/state_*.sqlite`、`thread_history_*.sqlite`（含 `-wal`/`-shm`） | 会话日志里会**原文记录**老账号 UUID/email | 退出 Codex（`lsof` 为空）后移走命中文件 |
 | Orca 等 Electron agent 工具：`~/Library/Application Support/<App>/Partitions/<browser-partition>/` | 内置浏览器的 cookie/IndexedDB/缓存，可能带 claude.ai 登录态 | 退出 App 后整个 partition 目录进废纸篓 |
 | 浏览器资料（Chrome/Edge/Safari 以及 wrapper 自建的 Chrome 资料） | claude.ai / anthropic / Google / Apple cookie，`spa:locale` 等 localStorage | 个人浏览器**不动**；专用浏览器资料重建 |
+| 个人浏览器里 **platform.claude.com**（Console）、support.claude.com、*.claudeusercontent.com 的 Local Storage | Console 的 `LSS-console-workspace-by-org` 等键按 org/account UUID 记录工作区选择 | 上次只清 claude.ai 会漏掉这些；在 chrome://settings/content/all 搜 `claude.com` 逐站删除 |
+| `~/Library/HTTPStorages/<第三方 Claude 工具>.binarycookies`（如 Claude Usage 菜单栏 App） | 第三方工具自己保存的 claude.ai 会话 cookie，App 卸载后仍留着 | 进废纸篓 |
+| `~/.claude/skills/synced/<org>_<acct>/`、`~/.claude/plugins/synced/<org>_<acct>/` + 同名 `.bucket-*` | 按 org/account UUID 命名的云同步 skills/plugins 目录，老账号的会一直留着 | 非当前账号的进废纸篓（目录**名**含老 UUID，内容扫描抓不到，要看 names 结果） |
 | `/tmp`、`~/Library/Caches`、`~/Library/Logs` 下 wrapper 的 IPC/日志 | 老会话 ID | 重启或手动清 |
 
 **老账号标记扫描**：从老的 `.claude.json`（或 wrapper 工作区的那份）取出 `accountUuid`、`organizationUuid`、email，
-用 `audit.sh --markers` 在 `$HOME` 下做全盘文本扫描（排除 `Library/Caches`、`node_modules`、`.git/objects` 等大目录），
-命中文件逐个列出路径和命中次数——**不输出命中行内容**。目标是最终 0 命中。
+用 `clean.py --markers <file>` 扫描。**不扫全盘**（家目录里照片/视频/Notion 分区/浏览器缓存动辄几十 GB，扫几十分钟也不会有账号标识），
+缺省只扫关键位置：`~/.claude`、`~/.claude.json`、shell rc、`Library/Application Support/Claude`、`Library/Preferences`、`Library/HTTPStorages`、
+wrapper 的 `*/workspaces/*/data/Claude`、agent 工具（orca/Codex/Cursor）的内嵌浏览器 `Partitions`、
+Chrome/Edge/Brave 各资料的 `Cookies / Local Storage / IndexedDB / Session Storage`；浏览器纯缓存目录（Service Worker、Code Cache、GPUCache…）一律剪掉。
+本机约 1 GB，30 秒出结果。Codex/Cursor 的会话库只会以"路径字符串"形式提到老账号，默认不扫，要查用 `--scan-root ~/.codex`。
+两类结果都要看：**content**（文件内容含标记）和 **names**（文件/目录名含标记——`~/.claude/skills/synced/<org>_<acct>/` 这种只靠内容扫描抓不到）。
+命中只列路径和次数——**不输出命中行内容**。目标是 0 命中。
 
 ## 2. 清理（必须有用户逐项确认）
+
+首选 `scripts/clean.py`：分三档（cache / account / device-records），默认只读输出 JSON 审计；`--apply` 时先做进程守卫（Claude 在跑、或从 Claude Code 会话内部启动，都会拒绝），再 SHA-256 校验备份到 `~/ClaudeBackups/`，移动目标进系统废纸篓、JSON 白名单键原子改写；全程需真实 TTY 输入 `CONFIRM`。`cleanup.sh` 留给 clean.py 不覆盖的项（wrapper/Codex/Orca/钥匙串/rc 注释）。
 
 `scripts/cleanup.sh <manifest.json>`：manifest 是 audit 生成、用户确认过的 JSON 列表，脚本只做：
 
@@ -152,6 +164,8 @@ NTP 返回 UTC 时间，不含任何时区信息；时区完全由系统设置�
 10. Surge 的 `bypass-tun` 是 iOS 旧参数名，macOS 报"未知的配置"且从未生效，用 `tun-excluded-routes`。把 `192.168.0.0/16` 整段放进 `skip-proxy`/`tun-excluded-routes` 会让所有针对内网段的代理跳板规则永远不触发。
 11. `com.apple.timezone.auto.plist Active=1` 是 2021 年的遗留键，不代表自动时区开着；以 `timed` 日志的 `TMAutomaticTimeZoneEnabled` 为准。
 12. Spotlight 会把 Chrome 副本本体索引出来，用户一点就拉起无代理参数的裸 Chrome——给目录放 `.metadata_never_index`。
+13. 不要让 Claude Code 自己去清理它正在使用的 `~/.claude`；用普通终端或 Codex 执行（clean.py 的父进程守卫也会拒绝这种启动方式）。
+14. 浏览器清理按顶层站点/分区判断：Persona、Cloudflare challenge、hCaptcha 等第三方域服务于多个站点，不能因为域名命中就删掉其它站点（ChatGPT、交易所等）的分区。
 
 ## 8. 交付时报告什么
 

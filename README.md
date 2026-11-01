@@ -82,6 +82,7 @@ scripts/verify.sh --check-exit \
 SKILL.md                      完整流程手册（§1 审计清单 → §7 踩坑清单）
 scripts/audit.sh              只读审计 → Markdown 报告 + manifest 草稿
 scripts/cleanup.sh            按确认过的 manifest 清理（mv 进废纸篓 / 钥匙串 / rc 注释）
+scripts/clean.py              分档清理（cache/account/device-records）：只读审计 JSON → SHA-256 校验备份 → 废纸篓，TTY CONFIRM + 进程守卫
 scripts/restore-git.sh        修被弄坏的仓库：找回远端历史，停在动手之前
 scripts/verify.sh             一致性核查：时区/代理/入口/钥匙串/规则/出口 IP
 surge/claude-rules.conf       Surge 固定出口规则模板（三层结构 + NTP 直连）
@@ -94,6 +95,17 @@ router/Info.plist             bundle 描述（LSUIElement、http/https URL types
 router/build.sh               swiftc 编译 + ad-hoc 签名 + 安装 + 设默认
 docs/what-claude-code-sends.md   Claude Code 到底把哪些"地区信号"发给服务端
 ```
+
+## clean.py（分档清理）
+
+```bash
+python3 scripts/clean.py                     # 只读审计全部档位 → JSON
+python3 scripts/clean.py --scope cache --apply   # 只清缓存档（TTY 输 CONFIRM）
+python3 scripts/clean.py --scope device-records --reset-machine-ids --apply
+python3 scripts/clean.py --markers old.txt --scan-root ~/Documents
+```
+
+备份校验 / 进程守卫 / 分档设计参考了 Pluviobyte/claude-ban-clean（https://github.com/Pluviobyte/claude-ban-clean）的思路，代码为独立实现。
 
 ## 老账号标记扫描
 
