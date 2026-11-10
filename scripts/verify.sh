@@ -37,6 +37,28 @@ echo "== 一致性核查 $(date '+%Y-%m-%d %H:%M:%S') =="
 tz_link=$(readlink /etc/localtime 2>/dev/null || echo "?")
 say INFO "系统时区: $tz_link ($(date +%Z) $(date '+%Y-%m-%d %H:%M %z'))  —— 应与固定出口 IP 所在时区一致"
 
+# ---- 系统首选语言 / 地区（浏览器 Intl 跟这个，不跟 --lang）----
+# Chrome 即使传了 --lang=en-US，renderer 仍可能吃 AppleLanguages 第一项；
+# fuck-claude 类检测里 Intl 区域设置读的就是这里。
+al=$(defaults read -g AppleLanguages 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
+alo=$(defaults read -g AppleLocale 2>/dev/null || echo "?")
+case "$al" in
+  *'en-US'*|*'en_US'*|*'\"en\"'*)
+    case "$al" in
+      \(\ \"en-US\"*| \(\ \"en\"*| \(\ \"en-US-*\"*| \(\ en-US*| \(\ en,*)
+        say PASS "AppleLanguages 首选英语 ($al)";;
+      *)
+        say WARN "AppleLanguages 含英语但不是第一项 ($al) —— 浏览器 Intl 会跟第一项，常见泄漏 zh-CN";;
+    esac;;
+  *)
+    say WARN "AppleLanguages=$al —— 浏览器 Intl.DateTimeFormat().resolvedOptions().locale 会跟系统首选语言";;
+esac
+case "$alo" in
+  en_US*|en-US*) say PASS "AppleLocale=$alo";;
+  zh*|*-Hans*|*-Hant*) say WARN "AppleLocale=$alo —— 与出口英文环境不一致时，Intl 易报 zh-CN";;
+  *) say INFO "AppleLocale=$alo";;
+esac
+
 # ---- 自动时区 ----
 at_line=$(log show --last 1d --predicate 'process == "timed"' --style compact 2>/dev/null \
           | grep -o 'TMAutomaticTimeZoneEnabled",v,"[01]"' | tail -1 || true)

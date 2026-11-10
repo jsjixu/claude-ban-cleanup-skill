@@ -119,12 +119,14 @@ NTP 返回 UTC 时间，不含任何时区信息；时区完全由系统设置�
 `browser/claude-browser.sh`（装到 `~/.local/bin/claude-browser`）：
 ```
 --user-data-dir=<独立资料目录>  --proxy-server=http://127.0.0.1:62919
+--proxy-bypass-list=<-loopback>
 --lang=en-US --accept-lang=en-US,en --disable-quic
 --force-webrtc-ip-handling-policy=disable_non_proxied_udp
 --no-first-run --no-default-browser-check
 ```
 - 用**单独复制的一份 Chrome.app**（不是 `/Applications/Google Chrome.app`），这样 Surge 的 `PROCESS-NAME … REJECT` 能按路径精确只掐它，不影响个人 Chrome。复制即可，不改签名；钥匙串 Chrome Safe Storage 认签名不认路径，改名/移动不丢登录态。Dock 显示的名字 = `.app` 文件夹名。
 - Dock/Spotlight 入口做一个 50 字节的 launcher `.app`（`Contents/MacOS/<name>` 是 `exec ~/.local/bin/claude-browser "$@"`），所有参数只在 `claude-browser` 一处维护。给 Chrome 副本所在目录放 `.metadata_never_index`，防止 Spotlight 直接拉起无参数的裸 Chrome。
+- `--lang` **不等于** JS `Intl` locale：后者跟 macOS `AppleLanguages` 第一项。系统首选仍是中文时，父进程写着 `--lang=en-US`，renderer 仍会变成 `--lang=zh-CN`。先改系统语言再重开浏览器（见 §6）。
 - `browser/harden-profile.py <profile-dir>`（Chrome 退出后运行）写 Preferences：`intl.accept_languages=en-US,en`、拼写词典 en-US、翻译关、`geolocation=2`（定位 API 默认拒绝——它走 Google 位置服务 + Wi-Fi 扫描，不受代理约束）、安全 DNS 关、`webrtc.ip_handling_policy=disable_non_proxied_udp`、禁止登录 Chrome 本体/Sync。**注意**：若之后在 Chrome 里新建资料或登录 Google 账号，Chrome 可能切到 `Profile 1/`，需对新目录重跑。
 
 ### 5.2 默认浏览器 = 40 行 Swift 路由器
@@ -148,7 +150,8 @@ NTP 返回 UTC 时间，不含任何时区信息；时区完全由系统设置�
 | DNS | Surge 记录：claude 域名**不在本机解析**，域名直接交给节点远端解析 | 本机只解析节点自身地址 |
 | 钥匙串 | `Claude Code-credentials` 存在且修改时间 = 新登录时间；老的长效令牌服务名不存在 | |
 | 远控 | CLI 顶栏 `/rc active`；网页端 "Not connected" 指**该网页条目对应的本机进程**不在线——每个 CLI 会话注册一个随机名字的环境，旧进程退出即永远 Not connected，不是网络问题。用 `/remote-control` 看当前会话名再去网页对应 | |
-| 改不了的 | 字体指纹（系统中文字体）、屏幕/GPU 指纹、出口 IP 信誉随时间变化 | 如实告知用户 |
+| 系统首选语言 / 地区 | `defaults read -g AppleLanguages` / `AppleLocale`。Chrome 的 `--lang=en-US` **压不住** renderer：系统首选是 `zh-Hans-*` 时，进程参数仍会出现 `--lang=zh-CN`，`Intl…locale` 报 `zh-CN`（fuck-claude「Intl 区域设置」就是这项） | 第一项改为 `en-US`；`AppleLocale=en_US`；改完**退出并重开**专用浏览器。中文可留在第二位 |
+| 改不了的 | 字体指纹（系统中文字体 PingFang/STHeiti 等——canvas 测宽就能扫到；装不装用户字体都一样）、屏幕/GPU 指纹、出口 IP 是否住宅/企业（proxycheck 等） | 如实告知；IP 只能换节点（企业/机房段再干净的 UA 也救不了） |
 
 ## 7. 踩过的坑（照着避免）
 
@@ -166,6 +169,7 @@ NTP 返回 UTC 时间，不含任何时区信息；时区完全由系统设置�
 12. Spotlight 会把 Chrome 副本本体索引出来，用户一点就拉起无代理参数的裸 Chrome——给目录放 `.metadata_never_index`。
 13. 不要让 Claude Code 自己去清理它正在使用的 `~/.claude`；用普通终端或 Codex 执行（clean.py 的父进程守卫也会拒绝这种启动方式）。
 14. 浏览器清理按顶层站点/分区判断：Persona、Cloudflare challenge、hCaptcha 等第三方域服务于多个站点，不能因为域名命中就删掉其它站点（ChatGPT、交易所等）的分区。
+15. 出口 IP「看起来是家宽 ASN」≠ 纯净：proxycheck 对 Cox / RingSquared 都可能标 `type=Business`（fuck-claude 按非住宅扣分）。换节点前先用 `proxycheck.io/v2/<ip>?vpn=1&asn=1` 看 `type`（要 `Residential`）和地时区是否与本机一致；美东出口 + 本机 `America/Los_Angeles` 会制造新的不一致。
 
 ## 8. 交付时报告什么
 
