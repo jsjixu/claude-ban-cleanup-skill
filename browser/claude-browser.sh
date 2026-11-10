@@ -14,6 +14,7 @@ mkdir -p "$CLAUDE_BROWSER_PROFILE"
 exec /usr/bin/open -na "$CLAUDE_BROWSER_APP" --args \
   --user-data-dir="$CLAUDE_BROWSER_PROFILE" \
   --proxy-server="http://127.0.0.1:$CLAUDE_PROXY_PORT" \
+  --proxy-bypass-list="<-loopback>" \
   --lang=en-US --accept-lang=en-US,en --disable-quic \
   --force-webrtc-ip-handling-policy=disable_non_proxied_udp \
   --no-first-run --no-default-browser-check "$@"
